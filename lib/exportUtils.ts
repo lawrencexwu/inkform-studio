@@ -28,7 +28,7 @@ export function exportSvg(svg: SVGSVGElement) {
 
 // html-to-image renders the live DOM (incl. loaded webfont) reliably across
 // browsers, so we rasterise the wrapper element rather than the raw SVG.
-async function rasterize(
+export async function rasterize(
   node: HTMLElement,
   width: number,
   height: number,

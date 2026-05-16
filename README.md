@@ -59,7 +59,8 @@ and roles for every glyph; the renderer turns those into filtered SVG text.
 
 ## Stroke-level rendering
 
-Characters are rendered as **real variable-width brush ribbons**, not a font:
+Characters are rendered from **real regular-script (楷書) stroke outlines**,
+not a font:
 
 1. `lib/strokeData.ts` loads each character's **real regular-script (楷書)
    stroke outlines** (the `strokes` field) from `hanzi-writer-data` (Make Me
@@ -83,3 +84,37 @@ clean serif glyph, so **text is never corrupted**.
 - Add an AI-assisted or alternative engine: branch in `renderGlyph`
   (`lib/renderCalligraphy.tsx`) — it already receives each glyph's position,
   size, role and resolved stroke outlines.
+
+## AI 潤色 / AI Render (experimental)
+
+The right sidebar has an **AI 潤色 Render** panel that gives the artwork an
+expressive 行草 brush-ink finish using the **free, keyless
+[Pollinations.ai](https://pollinations.ai) image API** (model `flux`).
+**No API key, no env var, no account.**
+
+How it stays correct: Pollinations is essentially text-to-image and generic
+models garble Chinese, so we never let it draw the characters. The pipeline
+(`lib/aiRender.ts` + `app/api/ai-render/route.ts`):
+
+1. Rasterises a hidden, transparent, glyph-only render (the exact correct
+   strokes) as a silhouette.
+2. Asks the server route (a proxy, to avoid canvas-tainting CORS) for an
+   AI ink + rice-paper image.
+3. Composites on a canvas so AI ink fills **only** the correct glyph shapes,
+   over the AI paper.
+
+Modes:
+
+- **紋理 texture** (default, safe) — AI supplies ink/paper texture only;
+  characters are masked to the correct shapes → **text is guaranteed
+  correct**, just rendered in real AI ink with bleed/flying-white.
+- **重塑 reshape** (experimental) — stronger 行草 prompt; still mask-
+  constrained. Note: v1 is **not** true image-to-image glyph restructuring
+  (keyless Pollinations can't accept our render without public hosting), so
+  it's stronger ink expression within correct silhouettes, not new letterforms.
+
+Honest limits: keyless generation is best-effort and slow (up to ~45s) and
+occasionally unavailable; the AI result is **not** saved in presets or the
+exported composition JSON; offline or on any failure the app cleanly falls
+back to the vector renderer with no data loss. Export the AI image via the
+panel's **匯出 AI PNG** button.

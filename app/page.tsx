@@ -11,6 +11,8 @@ import {
 } from "@/lib/presets";
 import { randomizeVariation } from "@/lib/randomUtils";
 import { exportPng, exportPdf, exportSvg } from "@/lib/exportUtils";
+import { generateAiRender, type AiMode } from "@/lib/aiRender";
+import { saveAs } from "file-saver";
 import { CANVAS_RATIOS, type CompositionState, type CompositionMode, type StyleKey } from "@/lib/compositionTypes";
 import type {
   TextState,
@@ -83,6 +85,14 @@ export default function Page() {
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const maskRef = useRef<HTMLDivElement>(null);
+
+  // AI render: transient UI state only — never persisted into CompositionState
+  // (keeps presets / exported JSON clean).
+  const [aiResult, setAiResult] = useState<string | null>(null);
+  const [showAi, setShowAi] = useState(false);
+  const [aiMode, setAiMode] = useState<AiMode>("texture");
+  const [aiIntensity, setAiIntensity] = useState(0.7);
 
   const patch = useCallback(
     <K extends keyof CompositionState>(
@@ -145,7 +155,11 @@ export default function Page() {
       await fn();
     } catch (e) {
       console.error(e);
-      alert("匯出失敗 Export failed — 請重試。");
+      alert(
+        e instanceof Error && e.message
+          ? `操作失敗 Failed: ${e.message}`
+          : "操作失敗 Operation failed — 請重試。"
+      );
     } finally {
       setBusy(null);
     }
@@ -172,6 +186,26 @@ export default function Page() {
       )
     );
 
+  const onAiRender = () =>
+    run("ai", async () => {
+      const url = await generateAiRender({
+        maskEl: maskRef.current!,
+        width: dims.w,
+        height: dims.h,
+        scale,
+        mode: aiMode,
+        intensity: aiIntensity,
+        state,
+      });
+      setAiResult(url);
+      setShowAi(true);
+    });
+
+  const onExportAiPng = () =>
+    run("aipng", () => {
+      if (aiResult) saveAs(aiResult, `inkform-ai-${Date.now()}.png`);
+    });
+
   const editor = {
     state,
     patchText,
@@ -192,7 +226,14 @@ export default function Page() {
       />
       <div className="flex-1 min-h-0 flex">
         <SidebarLeft {...editor} />
-        <ArtworkPreview ref={wrapRef} svgRef={svgRef} state={state} />
+        <ArtworkPreview
+          ref={wrapRef}
+          svgRef={svgRef}
+          maskRef={maskRef}
+          state={state}
+          aiResult={aiResult}
+          showAi={showAi}
+        />
         <SidebarRight
           {...editor}
           scale={scale}
@@ -202,6 +243,15 @@ export default function Page() {
           onPdf={onPdf}
           busy={busy}
           applyPreset={applyPreset}
+          aiMode={aiMode}
+          setAiMode={setAiMode}
+          aiIntensity={aiIntensity}
+          setAiIntensity={setAiIntensity}
+          aiResult={aiResult}
+          showAi={showAi}
+          setShowAi={setShowAi}
+          onAiRender={onAiRender}
+          onExportAiPng={onExportAiPng}
         />
       </div>
     </div>
