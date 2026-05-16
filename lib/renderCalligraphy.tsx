@@ -1,13 +1,13 @@
 // SVG calligraphy renderer.
 //
-// Stroke-level engine: each character's centerline (median) data is turned
-// into variable-width brush ribbons (strokeRibbon.ts) — real per-stroke
-// width modulation (entry/exit taper, belly, pressure, organic wobble)
-// driven by the brush params, then textured with SVG filters (turbulence /
-// displacement / bleed) and flying-white masking.
+// Stroke-level engine: each character is drawn from the dataset's REAL
+// regular-script (楷書) stroke outlines (correctly-shaped paths), then given
+// a calligraphic feel with per-character variation, ink-weight dilation and
+// SVG texture filters (turbulence / displacement / bleed) plus a flying-white
+// mask. The character shapes themselves stay correct and legible.
 //
-// Characters with no stroke data (rare Traditional forms / punctuation)
-// gracefully fall back to a brush webfont glyph so text is never corrupted.
+// Characters with no stroke data (rare forms / punctuation) fall back to a
+// clean serif glyph so text is never corrupted.
 
 import { forwardRef, useEffect, useMemo, useState } from "react";
 import type { CompositionState } from "./compositionTypes";
@@ -16,13 +16,13 @@ import { jitter } from "./randomUtils";
 import {
   loadStrokes,
   getCachedStrokes,
-  normalizePoint,
+  GRID,
+  GRID_CENTER,
   type CharStrokes,
 } from "./strokeData";
-import { buildRibbon } from "./strokeRibbon";
 
-// Async-loads median data for every unique character on screen and re-renders
-// as it arrives. Until a glyph's data is ready it falls back to the webfont.
+// Async-loads stroke data for every unique character on screen and re-renders
+// as it arrives. Until a glyph's data is ready it falls back to the font.
 function useStrokeMap(chars: string[]) {
   const key = chars.join("");
   const [, bump] = useState(0);
@@ -41,13 +41,10 @@ function useStrokeMap(chars: string[]) {
   return map;
 }
 
-// Bold brush face first; Traditional-coverage serif as per-glyph fallback so
-// the text is never corrupted. Used for the artwork glyphs.
-const BRUSH_FONT =
-  '"Ma Shan Zheng","Noto Serif TC","Songti TC","Source Han Serif TC","PMingLiU",serif';
-// Seals stay carved-square, so they keep the serif face.
-const SEAL_FONT =
+// Clean Traditional-coverage serif — used only for the rare fallback glyph.
+const FALLBACK_FONT =
   '"Noto Serif TC","Songti TC","Source Han Serif TC","PMingLiU",serif';
+const SEAL_FONT = FALLBACK_FONT;
 
 function sealColor(roughness: number) {
   return roughness > 0.6 ? "#a83227" : "#c0392b";
@@ -72,20 +69,20 @@ export const CalligraphySvg = forwardRef<SVGSVGElement, Props>(
     const strokeMap = useStrokeMap(uniqueChars);
 
     // --- Filter parameters derived from brush sliders ---
-    const distortFreq = (0.012 + b.edgeRoughness * 0.05).toFixed(4);
-    const distortScale = (b.edgeRoughness * 9 + b.randomness * 5).toFixed(2);
-    const bleedBlur = (b.bleed * 1.6 + b.dryness * 0.3).toFixed(2);
-    // Ribbons already carry brush mass, so the dilation only adds a little
-    // ink spread (it also fattens any fallback-font glyphs).
-    const dilate = (0.2 + b.thickness * 1.0 + b.inkDensity * 0.5).toFixed(2);
+    // Kept gentle: the outlines are correct shapes, so texture should
+    // weather the edges, not destroy them.
+    const distortFreq = (0.01 + b.edgeRoughness * 0.03).toFixed(4);
+    const distortScale = (b.edgeRoughness * 4 + b.randomness * 2).toFixed(2);
+    const bleedBlur = (b.bleed * 1.1 + b.dryness * 0.25).toFixed(2);
+    // Ink weight: dilation thickens the real strokes into brush mass.
+    const dilate = (0.4 + b.thickness * 3.2 + b.inkDensity * 1.0).toFixed(2);
 
     // Flying white: streaky alpha knockout, capped so text stays readable.
     const fwAmount = b.flyingWhite * (0.85 - b.readability * 0.35);
     const fwSlope = (3 + b.dryness * 4).toFixed(2);
     const fwIntercept = (-(1 - fwAmount) * 0.9).toFixed(3);
 
-    const inkAlpha = 0.55 + b.inkDensity * 0.45 - b.dryness * 0.18;
-    const showEcho = b.edgeRoughness > 0.35 || b.inkDensity > 0.7;
+    const inkAlpha = 0.7 + b.inkDensity * 0.3 - b.dryness * 0.15;
 
     const skew = b.cursiveLevel * 9 * (1 - b.readability * 0.4);
     const jitterAmt = b.randomness * (1 - b.readability * 0.45);
@@ -95,98 +92,67 @@ export const CalligraphySvg = forwardRef<SVGSVGElement, Props>(
         jitter(seed, g.index, 1) *
         (g.role === "title" ? 3.2 : 5.5) *
         jitterAmt;
-      // Signature trait of bold expressive calligraphy (董陽孜-inspired):
-      // wild per-character scale contrast. Driven by pressure variation,
-      // tamed by readability so the text stays legible.
-      const drama = b.pressureVariation * (1 - b.readability * 0.45);
+      // Gentle per-character size variation (the hand never repeats exactly).
+      // Driven by pressure variation, tamed by readability so it stays clean.
+      const drama = b.pressureVariation * (1 - b.readability * 0.55);
       const scaleVar =
         1 +
         jitter(seed, g.index, 7) *
-          (g.role === "title" ? 0.52 : 0.26) *
+          (g.role === "title" ? 0.16 : 0.09) *
           drama;
       const sx =
-        (1 + jitter(seed, g.index, 2) * 0.06 * jitterAmt) * scaleVar;
+        (1 + jitter(seed, g.index, 2) * 0.03 * jitterAmt) * scaleVar;
       const sy =
-        (1 + jitter(seed, g.index, 3) * 0.08 * jitterAmt) * scaleVar;
-      const dx = jitter(seed, g.index, 4) * g.size * 0.05 * jitterAmt;
-      const dy = jitter(seed, g.index, 5) * g.size * 0.05 * jitterAmt;
-      const op =
-        (0.82 + Math.abs(jitter(seed, g.index, 6)) * 0.18) *
-        (layer === "echo" ? 0.38 : 1);
+        (1 + jitter(seed, g.index, 3) * 0.04 * jitterAmt) * scaleVar;
+      const dx = jitter(seed, g.index, 4) * g.size * 0.03 * jitterAmt;
+      const dy = jitter(seed, g.index, 5) * g.size * 0.03 * jitterAmt;
+      const op = 0.9 + Math.abs(jitter(seed, g.index, 6)) * 0.1;
       const sk = g.role === "signature" ? skew * 0.5 : skew;
-      const echoShift = layer === "echo" ? b.edgeRoughness * 1.6 : 0;
 
-      // Per-glyph placement transform shared by ribbon and fallback paths.
+      // Per-glyph placement transform (glyph centred at its layout point).
       const place =
-        `translate(${(g.x + dx + echoShift).toFixed(2)},${(
-          g.y +
-          dy +
-          echoShift
-        ).toFixed(2)}) ` +
+        `translate(${(g.x + dx).toFixed(2)},${(g.y + dy).toFixed(2)}) ` +
         `rotate(${rot.toFixed(2)}) skewX(${(-sk).toFixed(2)}) ` +
         `scale(${sx.toFixed(3)},${sy.toFixed(3)})`;
 
       const data = strokeMap.get(g.char);
 
-      // --- Real stroke-ribbon rendering ---
-      if (data && data.medians.length) {
-        // Ribbons carry their own mass; the echo pass would just double it.
+      // --- Real regular-script stroke outlines ---
+      if (data && data.strokes.length) {
+        // Outlines are already solid shapes; the echo pass is font-only.
         if (layer === "echo") return null;
-        const cell = g.size * 1.06;
-        const rndm = b.randomness * (1 - b.readability * 0.35) + 0.05;
-        const d = data.medians
-          .map((m, si) =>
-            buildRibbon(
-              m.map(([x, y]) => normalizePoint(x, y)),
-              {
-                thickness: b.thickness * 0.85 + b.inkDensity * 0.15,
-                taper: b.strokeTaper,
-                pressure: b.pressureVariation,
-                speed: b.strokeSpeed,
-                randomness: rndm,
-                seed: seed + g.index * 31,
-                strokeIndex: si,
-              }
-            )
-          )
-          .filter(Boolean)
-          .join(" ");
+        const k = g.size / GRID;
+        // Map the raw 1024 design grid → a cell centred on the origin:
+        // (x,y) → (k·(x-512), k·(512-y)).
+        const fit =
+          `translate(${(-GRID_CENTER * k).toFixed(3)},${(
+            GRID_CENTER * k
+          ).toFixed(3)}) scale(${k.toFixed(5)},${(-k).toFixed(5)})`;
         return (
           <path
-            key={`r-${g.index}`}
-            d={d}
-            fill="#080605"
+            key={`s-${g.index}`}
+            d={data.strokes.join(" ")}
+            fill="#0b0807"
             fillRule="nonzero"
             opacity={op}
-            transform={`${place} translate(${(-cell / 2).toFixed(2)},${(
-              -cell / 2
-            ).toFixed(2)}) scale(${cell.toFixed(2)})`}
+            transform={`${place} ${fit}`}
           />
         );
       }
 
-      // --- Fallback: brush webfont glyph (keeps text correct) ---
-      const strokeW =
-        layer === "echo"
-          ? 0
-          : g.size *
-            (0.02 + b.thickness * 0.11) *
-            (1 - b.flyingWhite * 0.25);
-
+      // --- Fallback: clean serif glyph (keeps rare characters correct) ---
+      if (layer === "echo") return null;
       return (
         <text
-          key={`${layer}-${g.index}`}
+          key={`f-${g.index}`}
           x={0}
           y={0}
           fontSize={g.size}
-          fontFamily={BRUSH_FONT}
-          fontWeight={g.role === "title" ? 900 : 700}
+          fontFamily={FALLBACK_FONT}
+          fontWeight={g.role === "title" ? 700 : 500}
           textAnchor="middle"
           dominantBaseline="central"
-          fill="#080605"
-          stroke={strokeW > 0 ? "#080605" : undefined}
-          strokeWidth={strokeW || undefined}
-          strokeLinejoin="round"
+          fill="#0b0807"
           opacity={op}
           transform={place}
         >
@@ -335,8 +301,6 @@ export const CalligraphySvg = forwardRef<SVGSVGElement, Props>(
           opacity={inkAlpha}
           style={{ paintOrder: "stroke fill" }}
         >
-          {showEcho &&
-            layout.glyphs.map((g) => renderGlyph(g, "echo"))}
           {layout.glyphs.map((g) => renderGlyph(g, "main"))}
         </g>
 

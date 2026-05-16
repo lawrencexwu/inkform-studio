@@ -61,24 +61,25 @@ and roles for every glyph; the renderer turns those into filtered SVG text.
 
 Characters are rendered as **real variable-width brush ribbons**, not a font:
 
-1. `lib/strokeData.ts` loads per-character centerline (`medians`) data from
-   `hanzi-writer-data` (Make Me a Hanzi), served same-origin from
-   `public/hanzi` (`scripts/copy-hanzi.mjs`, run automatically before
-   `dev`/`build`; gitignored, regenerated from the npm dependency — works
-   offline, no external network).
-2. `lib/strokeRibbon.ts` resamples each stroke centerline (Catmull-Rom) and
-   sweeps a **width profile** along it — entry/exit taper (起筆/收筆), belly,
-   pressure modulation and organic wobble — all driven by the brush sliders.
-3. `lib/renderCalligraphy.tsx` places the ribbons using the layout engine's
-   positions, then textures them with SVG filters (turbulence / displacement
-   / bleed) and a flying-white mask.
+1. `lib/strokeData.ts` loads each character's **real regular-script (楷書)
+   stroke outlines** (the `strokes` field) from `hanzi-writer-data` (Make Me
+   a Hanzi), served same-origin from `public/hanzi`
+   (`scripts/copy-hanzi.mjs`, run automatically before `dev`/`build`;
+   gitignored, regenerated from the npm dependency — works offline, no
+   external network).
+2. `lib/renderCalligraphy.tsx` places those correct stroke shapes using the
+   layout engine's positions, applies gentle per-character variation, then
+   gives them a calligraphic feel with ink-weight dilation and SVG texture
+   filters (turbulence / displacement / bleed) plus a flying-white mask. The
+   character shapes themselves stay accurate and legible.
 
-Any character without stroke data (rare Traditional forms, punctuation)
-falls back to a brush webfont glyph, so **text is never corrupted**.
+Any character without stroke data (rare forms, punctuation) falls back to a
+clean serif glyph, so **text is never corrupted**.
 
 ### Tuning / extending
 
-- Stroke shape: `lib/strokeRibbon.ts` (`buildRibbon` width profile).
+- Texture & ink weight: the filter params at the top of the component in
+  `lib/renderCalligraphy.tsx`.
 - Add an AI-assisted or alternative engine: branch in `renderGlyph`
   (`lib/renderCalligraphy.tsx`) — it already receives each glyph's position,
-  size, role and resolved stroke data.
+  size, role and resolved stroke outlines.

@@ -1,14 +1,21 @@
-// Loads per-character median (centerline) data, served same-origin from
+// Loads per-character REAL stroke outlines, served same-origin from
 // /public/hanzi (see scripts/copy-hanzi.mjs). Source: hanzi-writer-data /
-// Make Me a Hanzi. Characters without data fall back to font rendering, so
-// the text is always shown correctly.
+// Make Me a Hanzi — these are correctly-shaped regular-script (楷書) stroke
+// paths drawn by font designers, not reconstructed skeletons.
+//
+// Characters without data (rare forms / punctuation) fall back to a clean
+// serif glyph, so the text is always shown correctly.
 
 export interface CharStrokes {
-  // One polyline of [x, y] points per stroke, in the raw 1024 grid.
-  medians: [number, number][][];
+  // One filled SVG path `d` string per stroke, in the raw 1024 design grid.
+  strokes: string[];
 }
 
-const GRID = 1024;
+// Make Me a Hanzi design grid + the canonical "render upright" transform.
+// A raw point (x, y) maps to local (k·(x-512), k·(512-y)) where k = cell/1024,
+// which centres the glyph box on the origin.
+export const GRID = 1024;
+export const GRID_CENTER = 512;
 
 const cache = new Map<string, CharStrokes | null>();
 const inflight = new Map<string, Promise<CharStrokes | null>>();
@@ -21,9 +28,9 @@ async function fetchChar(ch: string): Promise<CharStrokes | null> {
   try {
     const res = await fetch(`/hanzi/${encodeURIComponent(ch)}.json`);
     if (!res.ok) return null;
-    const data = (await res.json()) as { medians?: [number, number][][] };
-    if (!data.medians || !data.medians.length) return null;
-    return { medians: data.medians };
+    const data = (await res.json()) as { strokes?: string[] };
+    if (!data.strokes || !data.strokes.length) return null;
+    return { strokes: data.strokes };
   } catch {
     return null;
   }
@@ -44,13 +51,4 @@ export async function loadStrokes(ch: string): Promise<CharStrokes | null> {
   });
   inflight.set(ch, p);
   return p;
-}
-
-// Map a raw grid point into a unit cell, flipping the Y axis (data origin is
-// bottom-left, screen is top-left).
-export function normalizePoint(
-  x: number,
-  y: number
-): [number, number] {
-  return [x / GRID, (GRID - y) / GRID];
 }
