@@ -1,0 +1,9 @@
+/node_modules
+/public/hanzi
+/.next
+/out
+/build
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
+.env*
