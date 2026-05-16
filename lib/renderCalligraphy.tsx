@@ -1,19 +1,45 @@
 // SVG calligraphy renderer.
 //
-// This is a *visualizer*: it does not generate true brush strokes. It combines
-// a CJK serif webfont with SVG filters (turbulence + displacement + blur),
-// flying-white masking, per-glyph deterministic jitter and ink layering to
-// evoke brush behaviour while keeping the Traditional Chinese text legible.
+// Stroke-level engine: each character's centerline (median) data is turned
+// into variable-width brush ribbons (strokeRibbon.ts) — real per-stroke
+// width modulation (entry/exit taper, belly, pressure, organic wobble)
+// driven by the brush params, then textured with SVG filters (turbulence /
+// displacement / bleed) and flying-white masking.
 //
-// FUTURE STROKE-LEVEL ENGINE: replace the <GlyphLayer> body with stroke-path
-// geometry (e.g. per-character SVG outlines or generated brush ribbons). The
-// layout engine already supplies absolute positions, sizes and roles, so the
-// rest of the app would not need to change.
+// Characters with no stroke data (rare Traditional forms / punctuation)
+// gracefully fall back to a brush webfont glyph so text is never corrupted.
 
-import { forwardRef } from "react";
+import { forwardRef, useEffect, useMemo, useState } from "react";
 import type { CompositionState } from "./compositionTypes";
 import { layoutComposition, type PlacedGlyph } from "./layoutEngine";
 import { jitter } from "./randomUtils";
+import {
+  loadStrokes,
+  getCachedStrokes,
+  normalizePoint,
+  type CharStrokes,
+} from "./strokeData";
+import { buildRibbon } from "./strokeRibbon";
+
+// Async-loads median data for every unique character on screen and re-renders
+// as it arrives. Until a glyph's data is ready it falls back to the webfont.
+function useStrokeMap(chars: string[]) {
+  const key = chars.join("");
+  const [, bump] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    Promise.all(chars.map((ch) => loadStrokes(ch))).then(() => {
+      if (alive) bump((n) => n + 1);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [key]);
+  // Read-through the module cache (populated by loadStrokes).
+  const map = new Map<string, CharStrokes | null>();
+  for (const ch of chars) map.set(ch, getCachedStrokes(ch) ?? null);
+  return map;
+}
 
 // Bold brush face first; Traditional-coverage serif as per-glyph fallback so
 // the text is never corrupted. Used for the artwork glyphs.
@@ -39,11 +65,19 @@ export const CalligraphySvg = forwardRef<SVGSVGElement, Props>(
     const p = state.paper;
     const seed = state.seed;
 
+    const uniqueChars = useMemo(
+      () => Array.from(new Set(layout.glyphs.map((g) => g.char))),
+      [layout.glyphs]
+    );
+    const strokeMap = useStrokeMap(uniqueChars);
+
     // --- Filter parameters derived from brush sliders ---
     const distortFreq = (0.012 + b.edgeRoughness * 0.05).toFixed(4);
     const distortScale = (b.edgeRoughness * 9 + b.randomness * 5).toFixed(2);
     const bleedBlur = (b.bleed * 1.6 + b.dryness * 0.3).toFixed(2);
-    const dilate = (0.3 + b.thickness * 2.6 + b.inkDensity * 0.8).toFixed(2);
+    // Ribbons already carry brush mass, so the dilation only adds a little
+    // ink spread (it also fattens any fallback-font glyphs).
+    const dilate = (0.2 + b.thickness * 1.0 + b.inkDensity * 0.5).toFixed(2);
 
     // Flying white: streaky alpha knockout, capped so text stays readable.
     const fwAmount = b.flyingWhite * (0.85 - b.readability * 0.35);
@@ -82,8 +116,56 @@ export const CalligraphySvg = forwardRef<SVGSVGElement, Props>(
       const sk = g.role === "signature" ? skew * 0.5 : skew;
       const echoShift = layer === "echo" ? b.edgeRoughness * 1.6 : 0;
 
-      // Stroke widening turns the thin printed outline into brush mass —
-      // this is what makes it read as ink rather than a font.
+      // Per-glyph placement transform shared by ribbon and fallback paths.
+      const place =
+        `translate(${(g.x + dx + echoShift).toFixed(2)},${(
+          g.y +
+          dy +
+          echoShift
+        ).toFixed(2)}) ` +
+        `rotate(${rot.toFixed(2)}) skewX(${(-sk).toFixed(2)}) ` +
+        `scale(${sx.toFixed(3)},${sy.toFixed(3)})`;
+
+      const data = strokeMap.get(g.char);
+
+      // --- Real stroke-ribbon rendering ---
+      if (data && data.medians.length) {
+        // Ribbons carry their own mass; the echo pass would just double it.
+        if (layer === "echo") return null;
+        const cell = g.size * 1.06;
+        const rndm = b.randomness * (1 - b.readability * 0.35) + 0.05;
+        const d = data.medians
+          .map((m, si) =>
+            buildRibbon(
+              m.map(([x, y]) => normalizePoint(x, y)),
+              {
+                thickness: b.thickness * 0.85 + b.inkDensity * 0.15,
+                taper: b.strokeTaper,
+                pressure: b.pressureVariation,
+                speed: b.strokeSpeed,
+                randomness: rndm,
+                seed: seed + g.index * 31,
+                strokeIndex: si,
+              }
+            )
+          )
+          .filter(Boolean)
+          .join(" ");
+        return (
+          <path
+            key={`r-${g.index}`}
+            d={d}
+            fill="#080605"
+            fillRule="nonzero"
+            opacity={op}
+            transform={`${place} translate(${(-cell / 2).toFixed(2)},${(
+              -cell / 2
+            ).toFixed(2)}) scale(${cell.toFixed(2)})`}
+          />
+        );
+      }
+
+      // --- Fallback: brush webfont glyph (keeps text correct) ---
       const strokeW =
         layer === "echo"
           ? 0
@@ -106,15 +188,7 @@ export const CalligraphySvg = forwardRef<SVGSVGElement, Props>(
           strokeWidth={strokeW || undefined}
           strokeLinejoin="round"
           opacity={op}
-          transform={
-            `translate(${(g.x + dx + echoShift).toFixed(2)},${(
-              g.y +
-              dy +
-              echoShift
-            ).toFixed(2)}) ` +
-            `rotate(${rot.toFixed(2)}) skewX(${(-sk).toFixed(2)}) ` +
-            `scale(${sx.toFixed(3)},${sy.toFixed(3)})`
-          }
+          transform={place}
         >
           {g.char}
         </text>

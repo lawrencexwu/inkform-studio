@@ -57,15 +57,28 @@ Rendering logic (`layoutEngine`, `renderCalligraphy`) is deliberately kept
 separate from UI controls. The layout engine emits absolute positions, sizes
 and roles for every glyph; the renderer turns those into filtered SVG text.
 
-## Future stroke-level rendering
+## Stroke-level rendering
 
-The current renderer simulates brush behaviour with SVG filters
-(`feTurbulence` + `feDisplacementMap` + `feGaussianBlur`), flying-white
-masking, deterministic per-glyph jitter and ink layering — while keeping the
-Chinese characters intact and legible.
+Characters are rendered as **real variable-width brush ribbons**, not a font:
 
-To upgrade to **true stroke-level / AI-assisted rendering**, replace the
-`renderGlyph` body in `lib/renderCalligraphy.tsx` with stroke-path geometry
-(per-character outlines or generated brush ribbons). `layoutEngine.ts` already
-supplies each glyph's position, size and role, so no other layer needs to
-change.
+1. `lib/strokeData.ts` loads per-character centerline (`medians`) data from
+   `hanzi-writer-data` (Make Me a Hanzi), served same-origin from
+   `public/hanzi` (`scripts/copy-hanzi.mjs`, run automatically before
+   `dev`/`build`; gitignored, regenerated from the npm dependency — works
+   offline, no external network).
+2. `lib/strokeRibbon.ts` resamples each stroke centerline (Catmull-Rom) and
+   sweeps a **width profile** along it — entry/exit taper (起筆/收筆), belly,
+   pressure modulation and organic wobble — all driven by the brush sliders.
+3. `lib/renderCalligraphy.tsx` places the ribbons using the layout engine's
+   positions, then textures them with SVG filters (turbulence / displacement
+   / bleed) and a flying-white mask.
+
+Any character without stroke data (rare Traditional forms, punctuation)
+falls back to a brush webfont glyph, so **text is never corrupted**.
+
+### Tuning / extending
+
+- Stroke shape: `lib/strokeRibbon.ts` (`buildRibbon` width profile).
+- Add an AI-assisted or alternative engine: branch in `renderGlyph`
+  (`lib/renderCalligraphy.tsx`) — it already receives each glyph's position,
+  size, role and resolved stroke data.
