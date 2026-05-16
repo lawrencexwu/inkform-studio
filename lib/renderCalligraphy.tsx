@@ -15,7 +15,12 @@ import type { CompositionState } from "./compositionTypes";
 import { layoutComposition, type PlacedGlyph } from "./layoutEngine";
 import { jitter } from "./randomUtils";
 
-const FONT_STACK =
+// Bold brush face first; Traditional-coverage serif as per-glyph fallback so
+// the text is never corrupted. Used for the artwork glyphs.
+const BRUSH_FONT =
+  '"Ma Shan Zheng","Noto Serif TC","Songti TC","Source Han Serif TC","PMingLiU",serif';
+// Seals stay carved-square, so they keep the serif face.
+const SEAL_FONT =
   '"Noto Serif TC","Songti TC","Source Han Serif TC","PMingLiU",serif';
 
 function sealColor(roughness: number) {
@@ -38,7 +43,7 @@ export const CalligraphySvg = forwardRef<SVGSVGElement, Props>(
     const distortFreq = (0.012 + b.edgeRoughness * 0.05).toFixed(4);
     const distortScale = (b.edgeRoughness * 9 + b.randomness * 5).toFixed(2);
     const bleedBlur = (b.bleed * 1.6 + b.dryness * 0.3).toFixed(2);
-    const dilate = Math.max(0, b.thickness * 1.6 - 0.4).toFixed(2);
+    const dilate = (0.3 + b.thickness * 2.6 + b.inkDensity * 0.8).toFixed(2);
 
     // Flying white: streaky alpha knockout, capped so text stays readable.
     const fwAmount = b.flyingWhite * (0.85 - b.readability * 0.35);
@@ -56,15 +61,35 @@ export const CalligraphySvg = forwardRef<SVGSVGElement, Props>(
         jitter(seed, g.index, 1) *
         (g.role === "title" ? 3.2 : 5.5) *
         jitterAmt;
-      const sx = 1 + jitter(seed, g.index, 2) * 0.05 * jitterAmt;
-      const sy = 1 + jitter(seed, g.index, 3) * 0.06 * jitterAmt;
-      const dx = jitter(seed, g.index, 4) * g.size * 0.04 * jitterAmt;
-      const dy = jitter(seed, g.index, 5) * g.size * 0.04 * jitterAmt;
+      // Signature trait of bold expressive calligraphy (董陽孜-inspired):
+      // wild per-character scale contrast. Driven by pressure variation,
+      // tamed by readability so the text stays legible.
+      const drama = b.pressureVariation * (1 - b.readability * 0.45);
+      const scaleVar =
+        1 +
+        jitter(seed, g.index, 7) *
+          (g.role === "title" ? 0.52 : 0.26) *
+          drama;
+      const sx =
+        (1 + jitter(seed, g.index, 2) * 0.06 * jitterAmt) * scaleVar;
+      const sy =
+        (1 + jitter(seed, g.index, 3) * 0.08 * jitterAmt) * scaleVar;
+      const dx = jitter(seed, g.index, 4) * g.size * 0.05 * jitterAmt;
+      const dy = jitter(seed, g.index, 5) * g.size * 0.05 * jitterAmt;
       const op =
-        (0.78 + Math.abs(jitter(seed, g.index, 6)) * 0.22) *
-        (layer === "echo" ? 0.4 : 1);
+        (0.82 + Math.abs(jitter(seed, g.index, 6)) * 0.18) *
+        (layer === "echo" ? 0.38 : 1);
       const sk = g.role === "signature" ? skew * 0.5 : skew;
-      const echoShift = layer === "echo" ? b.edgeRoughness * 1.4 : 0;
+      const echoShift = layer === "echo" ? b.edgeRoughness * 1.6 : 0;
+
+      // Stroke widening turns the thin printed outline into brush mass —
+      // this is what makes it read as ink rather than a font.
+      const strokeW =
+        layer === "echo"
+          ? 0
+          : g.size *
+            (0.02 + b.thickness * 0.11) *
+            (1 - b.flyingWhite * 0.25);
 
       return (
         <text
@@ -72,13 +97,14 @@ export const CalligraphySvg = forwardRef<SVGSVGElement, Props>(
           x={0}
           y={0}
           fontSize={g.size}
-          fontFamily={FONT_STACK}
-          fontWeight={
-            g.role === "title" ? 700 + Math.round(b.thickness * 200) : 600
-          }
+          fontFamily={BRUSH_FONT}
+          fontWeight={g.role === "title" ? 900 : 700}
           textAnchor="middle"
           dominantBaseline="central"
-          fill="#0c0a09"
+          fill="#080605"
+          stroke={strokeW > 0 ? "#080605" : undefined}
+          strokeWidth={strokeW || undefined}
+          strokeLinejoin="round"
           opacity={op}
           transform={
             `translate(${(g.x + dx + echoShift).toFixed(2)},${(
@@ -316,7 +342,7 @@ function Seal({
             x={col * cell + cell / 2}
             y={row * cell + cell / 2}
             fontSize={cell * 0.72}
-            fontFamily={FONT_STACK}
+            fontFamily={SEAL_FONT}
             fontWeight={700}
             textAnchor="middle"
             dominantBaseline="central"

@@ -1,4 +1,7 @@
-@import url("https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;600;700;900&display=swap");
+/* Ma Shan Zheng = bold semi-cursive brush; Noto Serif TC (900) is the
+   guaranteed Traditional-coverage fallback — the browser does per-glyph
+   fallback so rare Traditional characters stay correct, never tofu. */
+@import url("https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Long+Cang&family=Noto+Serif+TC:wght@500;700;900&display=swap");
 
 @tailwind base;
 @tailwind components;
